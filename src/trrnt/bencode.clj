@@ -1,48 +1,78 @@
 (ns trrnt.bencode
-  (:require [clojure.string :as s])
-  (:require [instaparse.core :as ip]))
+  (:import (java.io ByteArrayOutputStream)))
 
-(defn- encode-str
-  [x]
-  (let [valid-str (s/replace x #"(?i)[^a-z]" "")]
-    (str (count valid-str) ":" valid-str)))
+;; based on implementation by Nurullah Akkaya
 
-(defn- encode-int
-  [n]
-  (str "i" (str n) "e"))
+(defn- decode-number [stream delimeter & ch]
+  (loop [i (if (nil? ch) (.read stream) (first ch)), result ""]
+    (let [c (char i)]
+      (if (= c delimeter)
+        (BigInteger. result)
+        (recur (.read stream) (str result c))))))
+
+(defn- decode-string [stream ch]
+  (let [length (decode-number stream \: ch)
+        buffer (make-array Byte/TYPE length)]
+    (.read stream buffer)
+    (String. buffer "ISO-8859-1")))
+
+(declare decode)
+(defn- decode-list [stream]
+  (loop [result []]
+    (let [c (char (.read stream))]
+      (if (= c \e)
+        result
+        (recur (conj result (decode stream (int c))))))))
+
+(defn- decode-map [stream]
+  (let [m (apply hash-map (decode-list stream))]
+    (zipmap (map keyword (keys m)) (vals m))))
+
+(defn decode [stream & i]
+  "decode clojure data structure from given InputStream of bencoded data"
+  (let [indicator (if (nil? i) (.read stream) (first i))]
+    (cond 
+     (and (>= indicator 48) 
+          (<= indicator 57)) (decode-string stream indicator)
+          (= (char indicator) \i) (decode-number stream \e)
+          (= (char indicator) \l) (decode-list stream)
+          (= (char indicator) \d) (decode-map stream))))
+
+(defn- encode-string [obj stream]
+  (let [bytes (.getBytes obj "ISO-8859-1")
+        bytes-length (.getBytes (str (count bytes) ":") "ISO-8859-1")]
+    (.write stream bytes-length 0 (count bytes-length))
+    (.write stream bytes 0 (count bytes))))
+
+(defn- encode-number [n stream]
+  (let [string (str "i" n "e")
+        bytes (.getBytes string "ISO-8859-1")]
+    (.write stream bytes 0 (count bytes))))
+
+(declare encode-object)
+(defn- encode-list [l stream]
+  (.write stream (int \l))
+  (doseq [item l]
+    (encode-object item stream))
+  (.write stream (int \e)))
 
 
-(defn encode
-  [x]
-  (cond
-    (some true? ((juxt  keyword? string?) x)) (encode-str x)
-    (number? x) (encode-int (int x))
-    (vector? x) (str "l" (s/join "" (map encode x)) "e")
-    (map? x) (str "d" (s/join "" (map encode
-                                      (flatten (seq x))))
-                  "e")))
+(defn- encode-dictionary [d stream]
+  (.write stream (int \d))
+  (doseq [item (flatten (seq d))]
+    (encode-object item stream))
+  (.write stream (int \e)))
 
-(def ^:private p
-  (ip/parser
-   (slurp "src/trrnt/bencode.abnf")
-   :input-format :abnf))
+(defn- encode-object [obj stream]
+  (cond (keyword? obj) (encode-string (name obj) stream)
+        (string? obj) (encode-string obj stream)
+        (number? obj) (encode-number obj stream)
+        (vector? obj) (encode-list obj stream)
+        (map? obj) (encode-dictionary obj stream)))
 
 
-(defn decode [x]
-  (let [parse-tree (p x)]
-    (ip/transform {:be (fn [& args] (first  args))
-                   :dictionary (fn [_ & a]
-                                 (let [items (apply hash-map (butlast a))
-                                       key-vals (zipmap
-                                                 (map #(keyword %) (keys items))
-                                                 (vals items))
-                                       ] key-vals)) 
-                   :list (fn [ _ & a] (vec (butlast a)))
-                   :anytype identity
-                   :signumber (fn [n] n)
-                   :integer (fn [_ n _] n)
-                   :number (fn [& digits] (read-string (apply str (map second digits))))
-                   :string (fn [_ _ & chars] (apply str (map second chars)))
-                   }
-                  parse-tree)))
-
+(defn encode [obj]
+  "bencode given clojure object, return byte[]"
+  (let [stream (ByteArrayOutputStream.)] 
+    (encode-object obj stream)
+    (.toByteArray stream)))
