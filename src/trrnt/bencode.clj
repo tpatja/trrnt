@@ -1,5 +1,6 @@
 (ns trrnt.bencode
-  (:import (java.io ByteArrayOutputStream)))
+  (:import (java.io ByteArrayOutputStream))
+  (:require [gloss.core :as gloss]))
 
 ;; based on implementation by Nurullah Akkaya
 
@@ -25,8 +26,8 @@
         (recur (conj result (decode stream (int c))))))))
 
 (defn- decode-map [stream]
-  (let [m (apply hash-map (decode-list stream))]
-    (zipmap (map keyword (keys m)) (vals m))))
+  (let [l (decode-list stream)]
+    (apply sorted-map l)))
 
 (defn decode [stream & i]
   "decode clojure data structure from given InputStream of bencoded data"
@@ -59,8 +60,9 @@
 
 (defn- encode-dictionary [d stream]
   (.write stream (int \d))
-  (doseq [item (flatten (seq d))]
-    (encode-object item stream))
+  (doseq [[k v] (seq d)]
+    (encode-object k stream)
+    (encode-object v stream))
   (.write stream (int \e)))
 
 (defn- encode-object [obj stream]
@@ -70,9 +72,9 @@
         (vector? obj) (encode-list obj stream)
         (map? obj) (encode-dictionary obj stream)))
 
-
-(defn encode [obj]
+(defn encode 
   "bencode given clojure object, return byte[]"
+  [obj]
   (let [stream (ByteArrayOutputStream.)] 
     (encode-object obj stream)
     (.toByteArray stream)))
