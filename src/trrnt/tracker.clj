@@ -1,6 +1,6 @@
-(ns trrnt.tracker2
-  (:import (java.io ByteArrayOutputStream DataOutputStream))
-  (:import (java.net InetSocketAddress DatagramPacket DatagramSocket))
+(ns trrnt.tracker
+  (:import (java.io ByteArrayOutputStream DataOutputStream)
+           (java.net InetSocketAddress DatagramPacket DatagramSocket))
   (:require [gloss.core :refer :all]
             [gloss.io :refer :all]
             [byte-streams :as bs]
@@ -39,15 +39,14 @@
 
 (defn mk-connect-input []
   (encode (udp-frames :connect-req) {:conn-id 0x41727101980
-                                 :action 0
-                                 :transaction-id (rnd-transaction-id)}))
+                                     :action 0
+                                     :transaction-id (rnd-transaction-id)}))
 
 (defn mk-scrape-req [connection-id info-hash]
   (encode (udp-frames :scrape-req) {:conn-id connection-id
-                                :action 2
-                                :transaction-id (rnd-transaction-id)
-                                :info-hash info-hash}))
-
+                                    :action 2
+                                    :transaction-id (rnd-transaction-id)
+                                    :info-hash info-hash}))
 
 (defn udp-request
   "Send connect request to UDP tracker. On success, return connection-id"
@@ -85,26 +84,33 @@
           (resp-map :conn-id) 
           nil)))))
 
-(defn scrape
+(defn scrape-udp
   ([host port info-hash]
-   (scrape host port (connect-udp-tracker host port) info-hash))
+   (scrape-udp host port (connect-udp-tracker host port) info-hash))
   ([host port connection-id info-hash]
    (when connection-id
      (println (str "connected to " host " with id " connection-id))
-     (let [req (mk-scrape-req connection-id info-hash)
-           req-arr (bs/to-byte-array req)
-           resp (udp-request host port req-arr (count req-arr) 20)
-           resp-map (decode (udp-frames :scrape-resp) resp)]
-       ;; (println "req " req)
-       [[host port] resp-map]))))
+     (let [req (bs/to-byte-array (mk-scrape-req connection-id info-hash))
+           resp (udp-request host port req (count req) 20)]
+       (when resp
+         (let [resp-map (decode (udp-frames :scrape-resp) resp)
+               req-map (decode (udp-frames :scrape-req) req)]
+           (if
+               (= (req-map :transaction-id)
+                  (resp-map :transaction-id))
+             (select-keys resp-map [:leechers :completed :seeders])
+             nil)))))))
 
-(defn <parallel-scrape-test
+(defn <parallel-scrape-udp
   "Scrapes given hash on given UDP trackers. 
-   Returns a channel for results"
+  Returns a channel for results"
   [trackers info-hash]
   (let [c (chan)]
-    ;;(go (println (str "from chan: " (<! c))))
     (doseq [[host port] trackers]
-      (println (str host " " port))
-      (go (>! c (scrape host port info-hash))))
+      (println (str "scraping " host " " port))
+      (go
+        (let [res (scrape-udp host port info-hash)]
+          (println "res " res)
+          (when res
+            (>! c [[host port info-hash] res])))))
     c))
