@@ -54,8 +54,6 @@
 
 (defn torrent-size
   [info-dict]
-  ;;(println "torrent-size")
-  ;;(println (info-dict "files"))
   (let [pieces (info-dict "pieces")
         piece-len (info-dict "piece length")
         n-pieces (/ (count pieces) 20)]
@@ -79,12 +77,13 @@
         announce (fn [url] (t/announce-http url hash "started" size))]
     (println (d "announce-list"))
     (println http-trackers)
+    (println (str  "from udp "  (t/announce-udp "open.demonii.com" 1337 (String.  hash "ISO-8859-1") size)))
     (go
       (let [c (t/<parallel-announce-http http-trackers hash "started" size)]
         (println (str "got " (<! c)))))))
 
 
-(defn scrape-torrent
+(defn scrape-torrent-test
   [fname]
   (let [d (b/decode (input-stream fname))
         trackers (flatten (d "announce-list"))
@@ -93,13 +92,13 @@
         udp-tracker-targets (map udp-tracker-target
                                  (conj  udp-trackers
                                         "udp://open.demonii.com:1337/announce"))
-        hash (String. (info-hash d))]
+        hash (String.  (info-hash d) "ISO-8859-1")]
     (println trackers)
     (println "torrent-size:" (torrent-size (d "info")))
-    (map #(t/scrape-http % hash) http-trackers)
+    ;;(map #(t/scrape-http % hash) http-trackers)
     ;; (println (str "scraping " (hexstring hash) " from UDP trackers " (s/join ", " udp-trackers)))
     ;; (println udp-tracker-targets)
-    ;; (scrape-torrent-udp "open.demonii.com" 1337 hash)
+    (scrape-torrent-udp "open.demonii.com" 1337 hash)
     ;; (println udp-trackers)
     ;; (println (s/join " " (map #(class (first %)) udp-tracker-targets)))
     ;; (map #(scrape-torrent-udp (first %) (second %) hash) udp-tracker-targets)

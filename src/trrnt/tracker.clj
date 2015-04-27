@@ -14,27 +14,48 @@
                      alts! alts!! timeout]]))
 
 (def udp-frames
-  {:connect-req (ordered-map :conn-id :uint64-be
-                             :action :uint32-be
-                             :transaction-id :uint32-be)
+  {:connect-req (ordered-map :conn-id :uint64
+                             :action :uint32
+                             :transaction-id :uint32)
    
-   :connect-resp (ordered-map :action :uint32-be
-                              :transaction-id :uint32-be
-                              :conn-id :uint64-be)
-   
-   :scrape-req (ordered-map :conn-id :uint64-be
-                            :action :uint32-be
-                            :transaction-id :uint32-be
-                            :info-hash (string :ascii :length 20))
+   :connect-resp (ordered-map :action :uint32
+                              :transaction-id :uint32
+                              :conn-id :uint64)
 
-   :scrape-resp (ordered-map :action :uint32-be
-                             :transaction-id :uint32-be
-                             :seeders :uint32-be
-                             :completed :uint32-be
-                             :leechers :uint32-be)
+   :announce-req (ordered-map :conn-id :uint64
+                              :action :uint32
+                              :transaction-id :uint32
+                              :info-hash (string :iso-8859-1 :length 20)
+                              :peer-id (string :ascii :length 20)
+                              :downloaded :uint64
+                              :left :uint64
+                              :uploaded :uint64
+                              :event :uint32
+                              :ip :uint32
+                              :key :uint32
+                              :num-want :int32
+                              :port :uint16)
    
-   :error-resp (ordered-map :action :uint32-be
-                            :transaction-id :uint32-be
+   :announce-resp-beginning (ordered-map :action :uint32
+                                         :transaction-id :uint32
+                                         :interval :uint32
+                                         :leechers :uint32
+                                         :seeders :uint32)
+
+   
+   :scrape-req (ordered-map :conn-id :uint64
+                            :action :uint32
+                            :transaction-id :uint32
+                            :info-hash (string :iso-8859-1 :length 20))
+
+   :scrape-resp (ordered-map :action :uint32
+                             :transaction-id :uint32
+                             :seeders :uint32
+                             :completed :uint32
+                             :leechers :uint32)
+   
+   :error-resp (ordered-map :action :uint32
+                            :transaction-id :uint32
                             :error (string :ascii))})
 
 (defn- rnd-transaction-id
@@ -46,8 +67,23 @@
                                      :action 0
                                      :transaction-id (rnd-transaction-id)}))
 
-(defn mk-scrape-req [connection-id info-hash]
-  (encode (udp-frames :scrape-req) {:conn-id connection-id
+(defn mk-announce-req [conn-id info-hash peer-id left]
+  (encode (udp-frames :announce-req) {:conn-id conn-id
+                                      :action 1
+                                      :transaction-id (rnd-transaction-id)
+                                      :info-hash info-hash
+                                      :peer-id peer-id
+                                      :downloaded 0
+                                      :left left
+                                      :uploaded 0
+                                      :event 2 ;; started
+                                      :ip 0
+                                      :key 0
+                                      :num-want -1
+                                      :port 6881}))
+
+(defn mk-scrape-req [conn-id info-hash]
+  (encode (udp-frames :scrape-req) {:conn-id conn-id
                                     :action 2
                                     :transaction-id (rnd-transaction-id)
                                     :info-hash info-hash}))
@@ -56,16 +92,16 @@
   [url]
   (s/replace url "announce" "scrape"))
 
+
 (defn udp-request
-  "Send connect request to UDP tracker. On success, return connection-id"
-  [host port data data-len recv-len]
+  [host port data data-len max-recv-len]
   (println (str "udp-request " host " " port))
   (try
     (let [s (DatagramSocket.)
           addr (InetSocketAddress. host port)
           recv-addr (InetSocketAddress. "localhost" (.getLocalPort s))
           packet (DatagramPacket. data data-len addr)
-          recv-packet (DatagramPacket. (byte-array recv-len) recv-len recv-addr)]
+          recv-packet (DatagramPacket. (byte-array max-recv-len) max-recv-len recv-addr)]
       (println (str "local port "  (.getLocalPort s)))
       (.setSoTimeout s 3000)
       (println "sending")
@@ -73,7 +109,8 @@
       (Thread/sleep 200)
       (println "receiving")
       (.receive s recv-packet)
-      (.getData recv-packet))
+      (println "recv len " (.getLength recv-packet))
+      (byte-array (take (.getLength recv-packet) (.getData recv-packet))))
     (catch Exception e
       (println (str "exception: " e))  nil)))
 
@@ -81,7 +118,7 @@
   "Send connect request to UDP tracker. On success, return connection-id"
   [host port]
   (let [req (bs/to-byte-array (mk-connect-input))
-        resp (udp-request host port req (count req) 16)]
+        resp (udp-request host port req (count req) 20)]
     (when resp
       (let [resp-map (decode (udp-frames :connect-resp) resp)
             req-map (decode (udp-frames :connect-req) req)]
@@ -120,6 +157,8 @@
     (catch Exception e
       (println (str "exception: " e)))))
 
+(defn split-ba [ba i]
+  (map byte-array [(take i ba) (take-last (- (count ba) i) ba)]))
 
 (defn rand-string [characters n]
   (->> (fn [] (rand-nth characters))
@@ -156,6 +195,22 @@
                      :port (bit-or
                             (bit-shift-left port-msb 8) (bit-and port-lsb 0xff))})))
           [] (partition 6 s)))
+
+
+(defn announce-udp
+  ([host port info-hash left]
+   (announce-udp host port (connect-udp-tracker host port) info-hash left))
+  ([host port connection-id info-hash left]
+   (println "announce-udp")
+   (when connection-id
+     (println (str "connected to " host " with id " connection-id))
+     (let [peer-id (gen-peer-id)
+           req (bs/to-byte-array (mk-announce-req connection-id info-hash peer-id left))
+           resp (udp-request host port req (count req) 1024)
+           [resp-beginning resp-end] (split-ba resp 20)
+           resp-map (decode (udp-frames :announce-resp-beginning) resp-beginning)
+           peers (parse-compact-peers (String. resp-end "ISO-8859-1"))]
+       (assoc resp-map "peers" peers)))))
 
 
 (defn announce-http
