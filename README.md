@@ -1,10 +1,6 @@
 # trrnt
 
-A library implementing BitTorrent in Clojure. A pet project for learning Clojure. Probably not useful for anyone else in it's current form.
-
-## Usage
-
-FIXME
+A library implementing BitTorrent in Clojure. A pet project for learning Clojure. Probably not useful for anyone else in it's current form. May grow into an actually working BitTorrent client one day.
 
 
 ## License
