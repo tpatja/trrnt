@@ -58,16 +58,22 @@
                             :transaction-id :uint32
                             :error (string :ascii))})
 
+(def udp-tracker-events {:connect-req   0
+                         :connect-resp  1
+                         :announce-req  2
+                         :announce-resp 3})
+
+
 (defn- rnd-transaction-id
   []
   (rand-int (/ (Integer/MAX_VALUE) 2)))
 
 (defn mk-connect-input []
   (encode (udp-frames :connect-req) {:conn-id 0x41727101980
-                                     :action 0
+                                     :action (udp-tracker-events :connect-req)
                                      :transaction-id (rnd-transaction-id)}))
 
-(defn mk-announce-req [conn-id info-hash peer-id left]
+(defn mk-announce-req [conn-id info-hash peer-id left port]
   (encode (udp-frames :announce-req) {:conn-id conn-id
                                       :action 1
                                       :transaction-id (rnd-transaction-id)
@@ -76,11 +82,11 @@
                                       :downloaded 0
                                       :left left
                                       :uploaded 0
-                                      :event 2 ;; started
+                                      :event (udp-tracker-events :announce-req)
                                       :ip 0
                                       :key 0
                                       :num-want -1
-                                      :port 6881}))
+                                      :port port}))
 
 (defn mk-scrape-req [conn-id info-hash]
   (encode (udp-frames :scrape-req) {:conn-id conn-id
@@ -198,14 +204,15 @@
 
 
 (defn announce-udp
+  "Announce given event to UDP tracker."
   ([host port info-hash left]
    (announce-udp host port (connect-udp-tracker host port) info-hash left))
   ([host port connection-id info-hash left]
-   (println "announce-udp")
    (when connection-id
      (println (str "connected to " host " with id " connection-id))
      (let [peer-id (gen-peer-id)
-           req (bs/to-byte-array (mk-announce-req connection-id info-hash peer-id left))
+           announce-req ()
+           req (bs/to-byte-array (mk-announce-req connection-id info-hash peer-id left 6881))
            resp (udp-request host port req (count req) 1024)
            [resp-beginning resp-end] (split-ba resp 20)
            resp-map (decode (udp-frames :announce-resp-beginning) resp-beginning)
@@ -214,7 +221,7 @@
 
 
 (defn announce-http
-  "HTTP announce request for given event"
+  "Announce given event to HTTP tracker"
   [announce-url info-hash event left]
   (println (str "announce-http " event))
   (let [peer-id (gen-peer-id)

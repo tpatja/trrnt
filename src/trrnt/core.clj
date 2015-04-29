@@ -77,7 +77,10 @@
         announce (fn [url] (t/announce-http url hash "started" size))]
     (println (d "announce-list"))
     (println http-trackers)
-    (println (str  "from udp "  (t/announce-udp "open.demonii.com" 1337 (String.  hash "ISO-8859-1") size)))
+    (println (str  "from udp "  (t/announce-udp "open.demonii.com"
+                                                1337
+                                                (String.  hash "ISO-8859-1")
+                                                size)))
     (go
       (let [c (t/<parallel-announce-http http-trackers hash "started" size)]
         (println (str "got " (<! c)))))))
