@@ -31,17 +31,6 @@
       (apply hash-map list) 
       {:order (map first (partition 2 list))})))
 
-(defn- decode-map-new [stream]
-  (let [list (decode-list stream)
-        m (apply hash-map list)
-        to-str (fn [b] (String. b "ISO-8859-1"))
-        mm (rename-keys m (zipmap (keys m) (map to-str (keys m))))]
-    ;;(println mm)
-    (with-meta 
-      mm
-      {:order (map first (partition 2 list))})))
-
-
 (defn decode [stream & i]
   "decode clojure data structure from given InputStream of bencoded data"
   (let [indicator (if (nil? i) (.read stream) (first i))]
@@ -85,11 +74,12 @@
 
 (defn- encode-object [obj stream]
   (cond (keyword? obj) (encode-string (name obj) stream)
-;;        (bytes? obj) (encode-object (String. obj "ISO-8859-1") stream)
         (string? obj) (encode-string obj stream)
         (number? obj) (encode-number obj stream)
         (vector? obj) (encode-list obj stream)
-        (map? obj) (encode-dictionary obj stream)))
+        (map? obj) (encode-dictionary obj stream)
+        :else (throw (Exception. "unsupported object"))
+        ))
 
 (defn encode 
   "bencode given clojure object, return byte[]"

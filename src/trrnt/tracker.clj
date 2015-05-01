@@ -2,7 +2,8 @@
   (:use clojure.java.io)
   (:import (java.io ByteArrayOutputStream DataOutputStream)
            (java.net InetSocketAddress InetAddress DatagramPacket DatagramSocket))
-  (:require [trrnt.bencode :as b]
+  (:require [trrnt.utils :refer :all]
+            [trrnt.bencode :as b]
             [gloss.core :refer :all]
             [gloss.io :refer :all]
             [aleph.http :as http]
@@ -58,11 +59,15 @@
                             :transaction-id :uint32
                             :error (string :ascii))})
 
-(def udp-tracker-events {:connect-req   0
-                         :connect-resp  1
-                         :announce-req  2
-                         :announce-resp 3})
+(def udp-tracker-actions {:connect   0
+                          :announce  1
+                          :scrape    2
+                          :error     3})
 
+(def udp-tracker-events {:none      0
+                         :completed 1
+                         :started   2
+                         :stopped   3})
 
 (defn- rnd-transaction-id
   []
@@ -70,19 +75,19 @@
 
 (defn mk-connect-input []
   (encode (udp-frames :connect-req) {:conn-id 0x41727101980
-                                     :action (udp-tracker-events :connect-req)
+                                     :action (udp-tracker-actions :connect)
                                      :transaction-id (rnd-transaction-id)}))
 
-(defn mk-announce-req [conn-id info-hash peer-id left port]
+(defn mk-announce-req [conn-id info-hash peer-id event left port]
   (encode (udp-frames :announce-req) {:conn-id conn-id
-                                      :action 1
+                                      :action (udp-tracker-actions :announce)
                                       :transaction-id (rnd-transaction-id)
                                       :info-hash info-hash
                                       :peer-id peer-id
                                       :downloaded 0
                                       :left left
                                       :uploaded 0
-                                      :event (udp-tracker-events :announce-req)
+                                      :event (udp-tracker-events event)
                                       :ip 0
                                       :key 0
                                       :num-want -1
@@ -134,44 +139,6 @@
           (resp-map :conn-id) 
           nil)))))
 
-(defn scrape-udp
-  "scrape UDP tracker for given info-hash"
-  ([host port info-hash]
-   (scrape-udp host port (connect-udp-tracker host port) info-hash))
-  ([host port connection-id info-hash]
-   (when connection-id
-     (println (str "connected to " host " with id " connection-id))
-     (let [req (bs/to-byte-array (mk-scrape-req connection-id info-hash))
-           resp (udp-request host port req (count req) 20)]
-       (when resp
-         (let [resp-map (decode (udp-frames :scrape-resp) resp)
-               req-map (decode (udp-frames :scrape-req) req)]
-           (if
-               (= (req-map :transaction-id)
-                  (resp-map :transaction-id))
-             (select-keys resp-map [:leechers :completed :seeders])
-             nil)))))))
-
-(defn scrape-http
-  ;; looks like scrape over HTTP is not really used anymore
-  [url info-hash]
-  (println "scrape-http")
-  (try
-    (let [scrape-url (announce-url->scrape-url url)
-          resp @(http/get url {:query-params {:info_hash info-hash}})]
-      (bs/to-string (resp :body)))
-    (catch Exception e
-      (println (str "exception: " e)))))
-
-(defn split-ba [ba i]
-  (map byte-array [(take i ba) (take-last (- (count ba) i) ba)]))
-
-(defn rand-string [characters n]
-  (->> (fn [] (rand-nth characters))
-       repeatedly
-       (take n)
-       (apply str)))
-
 (defn gen-peer-id []
   (rand-string (map char (range (int \a) (inc (int \z)))) 20))
 
@@ -205,14 +172,19 @@
 
 (defn announce-udp
   "Announce given event to UDP tracker."
-  ([host port info-hash left]
-   (announce-udp host port (connect-udp-tracker host port) info-hash left))
-  ([host port connection-id info-hash left]
+  ([host port info-hash event left]
+   (announce-udp host port (connect-udp-tracker host port) info-hash event left))
+  ([host port connection-id info-hash event left]
    (when connection-id
      (println (str "connected to " host " with id " connection-id))
      (let [peer-id (gen-peer-id)
            announce-req ()
-           req (bs/to-byte-array (mk-announce-req connection-id info-hash peer-id left 6881))
+           req (bs/to-byte-array (mk-announce-req connection-id
+                                                  info-hash
+                                                  peer-id
+                                                  event
+                                                  left
+                                                  6881))
            resp (udp-request host port req (count req) 1024)
            [resp-beginning resp-end] (split-ba resp 20)
            resp-map (decode (udp-frames :announce-resp-beginning) resp-beginning)
@@ -235,9 +207,40 @@
                              :left left
                              :compact 1
                              :no_peer_id 0
-                             :event event}})
+                             :event (name event)}})
         decoded-resp (b/decode (input-stream (:body res)))]
     (update-in decoded-resp ["peers"] parse-compact-peers)))
+
+
+(defn scrape-udp
+  "scrape UDP tracker for given info-hash"
+  ([host port info-hash]
+   (scrape-udp host port (connect-udp-tracker host port) info-hash))
+  ([host port connection-id info-hash]
+   (when connection-id
+     (println (str "connected to " host " with id " connection-id))
+     (let [req (bs/to-byte-array (mk-scrape-req connection-id info-hash))
+           resp (udp-request host port req (count req) 20)]
+       (when resp
+         (let [resp-map (decode (udp-frames :scrape-resp) resp)
+               req-map (decode (udp-frames :scrape-req) req)]
+           (if
+               (= (req-map :transaction-id)
+                  (resp-map :transaction-id))
+             (select-keys resp-map [:leechers :completed :seeders])
+             nil)))))))
+
+(defn scrape-http
+  ;; looks like scrape over HTTP is not really used anymore
+  [url info-hash]
+  (println "scrape-http")
+  (try
+    (let [scrape-url (announce-url->scrape-url url)
+          resp @(http/get url {:query-params {:info_hash info-hash}})]
+      (bs/to-string (resp :body)))
+    (catch Exception e
+      (println (str "exception: " e)))))
+
 
 (defn <parallel-announce-http
   [urls info-hash event left]

@@ -74,16 +74,19 @@
         http-trackers (filter (comp not udp-tracker?) trackers)
         size (torrent-size (d "info"))
         hash (info-hash d)
-        announce (fn [url] (t/announce-http url hash "started" size))]
+        udp-resp (t/announce-udp "open.demonii.com"
+                                 1337
+                                 (String.  hash "ISO-8859-1")
+                                 :started
+                                 size)
+        udp-peers (udp-resp "peers")]
     (println (d "announce-list"))
     (println http-trackers)
-    (println (str  "from udp "  (t/announce-udp "open.demonii.com"
-                                                1337
-                                                (String.  hash "ISO-8859-1")
-                                                size)))
+    (println (str  "udp peers" udp-peers))
     (go
-      (let [c (t/<parallel-announce-http http-trackers hash "started" size)]
-        (println (str "got " (<! c)))))))
+      (let [c (t/<parallel-announce-http http-trackers hash :started size)]
+        (println (str "got " (<! c)))))
+    hash))
 
 
 (defn scrape-torrent-test
@@ -106,4 +109,5 @@
     ;; (println (s/join " " (map #(class (first %)) udp-tracker-targets)))
     ;; (map #(scrape-torrent-udp (first %) (second %) hash) udp-tracker-targets)
     ;;    (hexstring info-hash)
+    hash
     ))
