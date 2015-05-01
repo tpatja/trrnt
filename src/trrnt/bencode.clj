@@ -78,8 +78,7 @@
         (number? obj) (encode-number obj stream)
         (vector? obj) (encode-list obj stream)
         (map? obj) (encode-dictionary obj stream)
-        :else (throw (Exception. "unsupported object"))
-        ))
+        :else (throw (Exception. "unsupported object"))))
 
 (defn encode 
   "bencode given clojure object, return byte[]"

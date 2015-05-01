@@ -1,4 +1,4 @@
-(ns trrnt.bencode
+(ns trrnt.bencode-test
   (:import (java.io ByteArrayInputStream))
   (:require [trrnt.bencode :refer :all]
             [clojure.test :refer :all]))

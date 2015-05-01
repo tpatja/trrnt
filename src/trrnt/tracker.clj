@@ -1,7 +1,7 @@
 (ns trrnt.tracker
   (:use clojure.java.io)
   (:import (java.io ByteArrayOutputStream DataOutputStream)
-           (java.net InetSocketAddress InetAddress DatagramPacket DatagramSocket))
+           (java.net InetSocketAddress InetAddress DatagramPacket DatagramSocket URI))
   (:require [trrnt.utils :refer :all]
             [trrnt.bencode :as b]
             [gloss.core :refer :all]
@@ -9,10 +9,7 @@
             [aleph.http :as http]
             [byte-streams :as bs]
             [clojure.string :as s]
-            [clojure.core.async
-             :as a
-             :refer [>! <! >!! <!! go chan buffer close! thread
-                     alts! alts!! timeout]]))
+            [clojure.core.async :as a]))
 
 (def udp-frames
   {:connect-req (ordered-map :conn-id :uint64
@@ -42,7 +39,6 @@
                                          :interval :uint32
                                          :leechers :uint32
                                          :seeders :uint32)
-
    
    :scrape-req (ordered-map :conn-id :uint64
                             :action :uint32
@@ -95,7 +91,7 @@
 
 (defn mk-scrape-req [conn-id info-hash]
   (encode (udp-frames :scrape-req) {:conn-id conn-id
-                                    :action 2
+                                    :action (udp-tracker-actions :scrape)
                                     :transaction-id (rnd-transaction-id)
                                     :info-hash info-hash}))
 
@@ -106,7 +102,6 @@
 
 (defn udp-request
   [host port data data-len max-recv-len]
-  (println (str "udp-request " host " " port))
   (try
     (let [s (DatagramSocket.)
           addr (InetSocketAddress. host port)
@@ -115,15 +110,12 @@
           recv-packet (DatagramPacket. (byte-array max-recv-len) max-recv-len recv-addr)]
       (println (str "local port "  (.getLocalPort s)))
       (.setSoTimeout s 3000)
-      (println "sending")
       (.send s packet)
       (Thread/sleep 200)
-      (println "receiving")
       (.receive s recv-packet)
-      (println "recv len " (.getLength recv-packet))
       (byte-array (take (.getLength recv-packet) (.getData recv-packet))))
     (catch Exception e
-      (println (str "exception: " e))  nil)))
+      (println (str "udp-request exception: " e))  nil)))
 
 (defn connect-udp-tracker
   "Send connect request to UDP tracker. On success, return connection-id"
@@ -156,7 +148,7 @@
   (apply str (map (fn [ch] (if (should-escape ch)
                              (str "%" (format "%02X" ch))
                              (char  ch)))
-                  hash)))
+                  (.getBytes  hash "ISO-8859-1"))))
 
 (defn parse-compact-peers
   [s]
@@ -164,17 +156,18 @@
             (let [[port-msb port-lsb] (take-last 2 (map int peer))
                   str-ip (apply str (interpose \. (map int (take 4 peer))))]
               (conj list
-                    {:ip (InetAddress/getByName str-ip)
+                    {:ip str-ip
                      :port (bit-or
                             (bit-shift-left port-msb 8) (bit-and port-lsb 0xff))})))
           [] (partition 6 s)))
 
-
 (defn announce-udp
   "Announce given event to UDP tracker."
   ([host port info-hash event left]
+   (println "announce-udp")
    (announce-udp host port (connect-udp-tracker host port) info-hash event left))
   ([host port connection-id info-hash event left]
+   (println "announce-udp " event)
    (when connection-id
      (println (str "connected to " host " with id " connection-id))
      (let [peer-id (gen-peer-id)
@@ -195,7 +188,7 @@
 (defn announce-http
   "Announce given event to HTTP tracker"
   [announce-url info-hash event left]
-  (println (str "announce-http " event))
+  (println "announce-http" event)
   (let [peer-id (gen-peer-id)
         encoded-hash (hash->urlparam info-hash)
         url (.concat announce-url (str "?info_hash=" encoded-hash))
@@ -210,6 +203,51 @@
                              :event (name event)}})
         decoded-resp (b/decode (input-stream (:body res)))]
     (update-in decoded-resp ["peers"] parse-compact-peers)))
+
+
+(defn udp-tracker?
+  [url]
+  (try 
+    (let [u (URI. url)
+          protocol (.getScheme u)]
+      (= protocol "udp"))
+    (catch Exception e
+      (println "udp-tracker? exception" e)
+      false)))
+
+(defn udp-tracker-target [url]
+  (let [u (URI. url)
+        host (.getHost u)
+        port (.getPort u)]
+    [host port]))
+
+
+(defn announce
+  [tracker info-hash event left]
+  (println "announce " tracker)
+  (try
+    (if (udp-tracker? tracker)
+      (let [[host port] (udp-tracker-target tracker)]
+        (announce-udp host port info-hash event left))
+      (announce-http tracker info-hash event left))
+    (catch Exception e
+      (println "announce exception " e))
+    ))
+
+(defn <announce
+  "Announce given event for given trackers. Return core.async channel yielding list of peers"
+  [trackers info-hash event left]
+  (println "<announce " event trackers)
+  (println (conj trackers "udp://open.demonii.com:1337/announce"))
+  (let [hash (String.  info-hash "ISO-8859-1")
+        c (a/chan)]
+    (doseq [t (conj trackers "udp://open.demonii.com:1337/announce")]
+      (a/go
+        (let [r (announce t hash event left)]
+          (when r
+            ;; TODO: somehow make sure no duplicates get put into channel
+            (a/>! c (r "peers"))))))
+    c))
 
 
 (defn scrape-udp
@@ -239,31 +277,19 @@
           resp @(http/get url {:query-params {:info_hash info-hash}})]
       (bs/to-string (resp :body)))
     (catch Exception e
-      (println (str "exception: " e)))))
+      (println (str "scrape-http exception: " e)))))
 
 
-(defn <parallel-announce-http
-  [urls info-hash event left]
-  (let [c (chan)]
-    (doseq [url urls]
-      (println (str "announce " url))
-      (go
-        (let [res (announce-http url info-hash event left)]
-          (when res
-            (>! c res)))))
-    c))
-
-
-(defn <parallel-scrape-udp
+(defn <scrape-udp
   "Scrapes given hash on given UDP trackers. 
   Returns a channel for results"
   [trackers info-hash]
-  (let [c (chan)]
+  (let [c (a/chan)]
     (doseq [[host port] trackers]
       (println (str "scraping " host " " port))
-      (go
+      (a/go
         (let [res (scrape-udp host port info-hash)]
           (println "res " res)
           (when res
-            (>! c [[host port info-hash] res])))))
+            (a/>! c [[host port info-hash] res])))))
     c))
