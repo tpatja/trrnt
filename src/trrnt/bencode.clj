@@ -26,20 +26,20 @@
         (recur (conj result (decode stream (int c))))))))
 
 (defn- decode-map [stream]
-  (let [list (decode-list stream)] 
-    (with-meta 
-      (apply hash-map list) 
+  (let [list (decode-list stream)]
+    (with-meta
+      (apply hash-map list)
       {:order (map first (partition 2 list))})))
 
 (defn decode [stream & i]
   "decode clojure data structure from given InputStream of bencoded data"
   (let [indicator (if (nil? i) (.read stream) (first i))]
-    (cond 
-     (and (>= indicator 48) 
-          (<= indicator 57)) (decode-string stream indicator)
-          (= (char indicator) \i) (decode-number stream \e)
-          (= (char indicator) \l) (decode-list stream)
-          (= (char indicator) \d) (decode-map stream))))
+    (cond
+      (and (>= indicator 48)
+           (<= indicator 57)) (decode-string stream indicator)
+      (= (char indicator) \i) (decode-number stream \e)
+      (= (char indicator) \l) (decode-list stream)
+      (= (char indicator) \d) (decode-map stream))))
 
 (defn- encode-string [obj stream]
   (let [bytes (.getBytes obj "ISO-8859-1")
@@ -59,18 +59,17 @@
     (encode-object item stream))
   (.write stream (int \e)))
 
-
 (defn bytes? [x]
   (= (Class/forName "[B")
      (.getClass x)))
 
 (defn- encode-dictionary [d stream]
   (.write stream (int \d))
-   (doseq [item (if (nil? (meta d)) 
-                 (keys d)(:order (meta d)))]
+  (doseq [item (if (nil? (meta d))
+                 (keys d) (:order (meta d)))]
     (encode-object item stream)
     (encode-object (d item) stream))
-   (.write stream (int \e)))
+  (.write stream (int \e)))
 
 (defn- encode-object [obj stream]
   (cond (keyword? obj) (encode-string (name obj) stream)
@@ -80,9 +79,9 @@
         (map? obj) (encode-dictionary obj stream)
         :else (throw (Exception. "unsupported object"))))
 
-(defn encode 
+(defn encode
   "bencode given clojure object, return byte[]"
   [obj]
-  (let [stream (ByteArrayOutputStream.)] 
+  (let [stream (ByteArrayOutputStream.)]
     (encode-object obj stream)
     (.toByteArray stream)))

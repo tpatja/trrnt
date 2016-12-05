@@ -7,22 +7,22 @@
             [manifold.deferred :as d]
             [aleph.tcp :as tcp]
             [byte-streams :as bs]
-            [clojure.core.async :as a]))
+            [clojure.core.async :as a]
+            [clojure.string :as string]))
 
-
-(defonce peer-id (str "-RR0001-" (apply str (take 12 (repeatedly #(rand-int 10))))))
+(defonce peer-id (str "-RR0001-" (string/join (repeatedly 12 #(rand-int 10)))))
 
 (g/defcodec message-id (g/enum :ubyte
-                           :choke
-                           :unchoke
-                           :interested
-                           :not-interested
-                           :have
-                           :bitfield
-                           :request
-                           :piece
-                           :cancel
-                           :port))
+                               :choke
+                               :unchoke
+                               :interested
+                               :not-interested
+                               :have
+                               :bitfield
+                               :request
+                               :piece
+                               :cancel
+                               :port))
 
 (defn message-codecs []
   (let [codec-defs   [{:type :choke}
@@ -60,17 +60,17 @@
 
 (defn mk-handshake [info-hash]
   (io/encode (codecs :handshake) {:dummy 19
-                               :protocol-name "BitTorrent protocol"
-                               :reserved 0
-                               :info-hash info-hash
-                               :peer-id peer-id}))
+                                  :protocol-name "BitTorrent protocol"
+                                  :reserved 0
+                                  :info-hash info-hash
+                                  :peer-id peer-id}))
 
 (defn peer-client-name [peer-id]
   "Return client name and version given a peer ID. Assumes peer ID uses BEP-20 convention"
   (let [match (re-find #"^\-([A-Z][A-Z])(\p{ASCII}+)\-" peer-id)]
     (if match
       (let [client-id (second match)
-            client-ver (apply str (interpose "." (nth match 2)))]
+            client-ver (string/join "." (nth match 2))]
         (str (known-bt-client-names client-id) " " client-ver))
       "unknown client")))
 

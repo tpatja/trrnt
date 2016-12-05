@@ -7,7 +7,6 @@
             [clojure.core.async :as a])
   (:gen-class))
 
-
 (defn info-hash
   [torrent-dict]
   (sha1 (b/encode (torrent-dict "info"))))
@@ -18,16 +17,16 @@
         piece-len (info-dict "piece length")
         n-pieces (/ (count pieces) 20)]
     (if
-        (contains? info-dict "length") (do
-                                         (println "length exists")
-                                         (info-dict "length"))
-        (reduce + (map #(% "length") (info-dict "files"))))))
+     (contains? info-dict "length") (do
+                                      (println "length exists")
+                                      (info-dict "length"))
+     (reduce + (map #(% "length") (info-dict "files"))))))
 
 (defn torrent-trackers
   [d]
   (if (contains? d "announce-list")
-                   (flatten (d "announce-list"))
-                   (conj ()  (d "announce"))))
+    (flatten (d "announce-list"))
+    (vector (d "announce"))))
 
 (defn start-torrent-test
   [fname]

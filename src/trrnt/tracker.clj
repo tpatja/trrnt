@@ -8,14 +8,14 @@
             [gloss.io :refer :all]
             [aleph.http :as http]
             [byte-streams :as bs]
-            [clojure.string :as s]
+            [clojure.string :as string]
             [clojure.core.async :as a]))
 
 (def udp-frames
   {:connect-req (ordered-map :conn-id :uint64
                              :action :uint32
                              :transaction-id :uint32)
-   
+
    :connect-resp (ordered-map :action :uint32
                               :transaction-id :uint32
                               :conn-id :uint64)
@@ -33,13 +33,13 @@
                               :key :uint32
                               :num-want :int32
                               :port :uint16)
-   
+
    :announce-resp-beginning (ordered-map :action :uint32
                                          :transaction-id :uint32
                                          :interval :uint32
                                          :leechers :uint32
                                          :seeders :uint32)
-   
+
    :scrape-req (ordered-map :conn-id :uint64
                             :action :uint32
                             :transaction-id :uint32
@@ -50,7 +50,7 @@
                              :seeders :uint32
                              :completed :uint32
                              :leechers :uint32)
-   
+
    :error-resp (ordered-map :action :uint32
                             :transaction-id :uint32
                             :error (string :ascii))})
@@ -97,8 +97,7 @@
 
 (defn announce-url->scrape-url
   [url]
-  (s/replace url "announce" "scrape"))
-
+  (string/replace url "announce" "scrape"))
 
 (defn udp-request
   [host port data data-len max-recv-len]
@@ -125,11 +124,10 @@
     (when resp
       (let [resp-map (decode (udp-frames :connect-resp) resp)
             req-map (decode (udp-frames :connect-req) req)]
-        (if (and
-             (= (req-map :transaction-id (resp-map :transaction-id)))
-             (= (resp-map :action) 0))
-          (resp-map :conn-id) 
-          nil)))))
+        (when (and
+               (= (req-map :transaction-id (resp-map :transaction-id)))
+               (zero? (resp-map :action)))
+          (resp-map :conn-id))))))
 
 (defn gen-peer-id []
   (rand-string (map char (range (int \a) (inc (int \z)))) 20))
@@ -145,16 +143,16 @@
 
 (defn hash->urlparam
   [hash]
-  (apply str (map (fn [ch] (if (should-escape ch)
-                             (str "%" (format "%02X" ch))
-                             (char  ch)))
-                  (.getBytes  hash "ISO-8859-1"))))
+  (string/join (map (fn [ch] (if (should-escape ch)
+                               (str "%" (format "%02X" ch))
+                               (char  ch)))
+                    (.getBytes  hash "ISO-8859-1"))))
 
 (defn parse-compact-peers
   [s]
-  (reduce (fn[list peer]
+  (reduce (fn [list peer]
             (let [[port-msb port-lsb] (take-last 2 (map int peer))
-                  str-ip (apply str (interpose \. (map int (take 4 peer))))]
+                  str-ip (string/join \. (map int (take 4 peer)))]
               (conj list
                     {:ip str-ip
                      :port (bit-or
@@ -184,7 +182,6 @@
            peers (parse-compact-peers (String. resp-end "ISO-8859-1"))]
        (assoc resp-map "peers" peers)))))
 
-
 (defn announce-http
   "Announce given event to HTTP tracker"
   [announce-url info-hash event left]
@@ -204,10 +201,9 @@
         decoded-resp (b/decode (input-stream (:body res)))]
     (update-in decoded-resp ["peers"] parse-compact-peers)))
 
-
 (defn udp-tracker?
   [url]
-  (try 
+  (try
     (let [u (URI. url)
           protocol (.getScheme u)]
       (= protocol "udp"))
@@ -221,7 +217,6 @@
         port (.getPort u)]
     [host port]))
 
-
 (defn announce
   [tracker info-hash event left]
   (println "announce " tracker)
@@ -231,8 +226,7 @@
         (announce-udp host port info-hash event left))
       (announce-http tracker info-hash event left))
     (catch Exception e
-      (println "announce exception " e))
-    ))
+      (println "announce exception " e))))
 
 (defn <announce
   "Announce given event for given trackers. Return core.async channel yielding list of peers"
@@ -247,7 +241,6 @@
             (a/>! c [t (r "peers")])))))
     c))
 
-
 (defn scrape-udp
   "scrape UDP tracker for given info-hash"
   ([host port info-hash]
@@ -260,11 +253,9 @@
        (when resp
          (let [resp-map (decode (udp-frames :scrape-resp) resp)
                req-map (decode (udp-frames :scrape-req) req)]
-           (if
-               (= (req-map :transaction-id)
-                  (resp-map :transaction-id))
-             (select-keys resp-map [:leechers :completed :seeders])
-             nil)))))))
+           (when (= (req-map :transaction-id)
+                    (resp-map :transaction-id))
+             (select-keys resp-map [:leechers :completed :seeders]))))))))
 
 (defn scrape-http
   ;; looks like scrape over HTTP is not really used anymore
@@ -277,9 +268,8 @@
     (catch Exception e
       (println (str "scrape-http exception: " e)))))
 
-
 (defn <scrape-udp
-  "Scrapes given hash on given UDP trackers. 
+  "Scrapes given hash on given UDP trackers.
   Returns a channel for results"
   [trackers info-hash]
   (let [c (a/chan)]
