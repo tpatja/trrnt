@@ -23,27 +23,26 @@
                                          (info-dict "length"))
         (reduce + (map #(% "length") (info-dict "files"))))))
 
+(defn torrent-trackers
+  [d]
+  (if (contains? d "announce-list")
+                   (flatten (d "announce-list"))
+                   (conj ()  (d "announce"))))
 
-(defn announce-torrent-test
+(defn start-torrent-test
   [fname]
   (let [d (b/decode (input-stream fname))
-        trackers (if (contains? d "announce-list")
-                   (flatten (d "announce-list"))
-                   (conj ()  (d "announce")))
+        trackers (torrent-trackers d)
         size (torrent-size (d "info"))
-        hash (info-hash d)]
+        hash (String. (info-hash d) "ISO-8859-1")]
     (a/go
-      (let [c (t/<announce trackers hash :started size)
-            ]
-        (dotimes [_ 12]
-          (let [peers (a/<! c)]
-            (println (str "got: " peers))
+      (let [c (t/<announce trackers hash :started size)]
+        (dotimes [_ 12] ;; for some reason one channel take does not give all contents
+          (let [[tracker peers] (a/<! c)]
+            (println (str "got: " peers " from " tracker))
             (doseq [p peers]
-                        (a/go
-                          (pwp/start (:ip p)
-                                     (:port p)
-                                     (String. hash "ISO-8859-1")))))))
-      (t/<announce trackers hash :stopped size))
+              (pwp/start (:ip p) (:port p) hash))))
+        (t/<announce trackers hash :stopped size)))
     hash))
 
 (defn -main []

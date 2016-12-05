@@ -238,15 +238,13 @@
   "Announce given event for given trackers. Return core.async channel yielding list of peers"
   [trackers info-hash event left]
   (println "<announce " event trackers)
-  (println (conj trackers "udp://open.demonii.com:1337/announce"))
-  (let [hash (String.  info-hash "ISO-8859-1")
-        c (a/chan)]
+  (let [c (a/chan)]
     (doseq [t (conj trackers "udp://open.demonii.com:1337/announce")]
       (a/go
-        (let [r (announce t hash event left)]
+        (let [r (announce t info-hash event left)]
           (when r
             ;; TODO: somehow make sure no duplicates get put into channel
-            (a/>! c (r "peers"))))))
+            (a/>! c [t (r "peers")])))))
     c))
 
 

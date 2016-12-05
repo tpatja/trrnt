@@ -10,4 +10,5 @@
                  [aleph "0.4.0"]
                  [manifold "0.1.0"]
                  [gloss "0.2.5"]
-                 [byte-streams "0.2.0"]])
+                 [byte-streams "0.2.0"]
+                 [cheshire "5.4.0"]])
