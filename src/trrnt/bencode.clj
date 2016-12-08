@@ -1,19 +1,21 @@
 (ns trrnt.bencode
   (:import (java.io ByteArrayOutputStream))
-  (:require [clojure.java.io :as io]))
+  (:require [clojure.java.io :as io]
+            [byte-streams :as bs]))
 
 (defn- decode-number [stream delimeter & ch]
   (loop [i (if (nil? ch) (.read stream) (first ch)), result ""]
     (let [c (char i)]
       (if (= c delimeter)
         (BigInteger. result)
-        (recur (.read stream) (str result c))))))
+        (recur (.read stream)
+               (str result c))))))
 
 (defn- decode-string [stream ch]
   (let [length (decode-number stream \: ch)
         buffer (byte-array length)]
     (.read stream buffer)
-    (String. buffer "ISO-8859-1")))
+    (bs/to-string buffer "ISO-8859-1")))
 
 (declare decode)
 (defn- decode-list [stream]
@@ -21,7 +23,8 @@
     (let [c (char (.read stream))]
       (if (= c \e)
         result
-        (recur (conj result (decode stream (int c))))))))
+        (recur (conj result
+                     (decode stream (int c))))))))
 
 (defn- decode-map [stream]
   (let [list (decode-list stream)]
@@ -57,10 +60,6 @@
   (doseq [item l]
     (encode-object item stream))
   (.write stream (int \e)))
-
-(defn bytes? [x]
-  (= (Class/forName "[B")
-     (.getClass x)))
 
 (defn- encode-dictionary [d stream]
   (.write stream (int \d))
