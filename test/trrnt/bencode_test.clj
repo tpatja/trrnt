@@ -1,16 +1,18 @@
 (ns trrnt.bencode-test
-  (:import (java.io ByteArrayInputStream))
   (:require [trrnt.bencode :refer :all]
+            [clojure.java.io :as io]
             [clojure.test :refer :all]))
 
 (deftest encode-trivial []
-  (is (= (String.  (encode {"a" 42}) "ISO-8859-1")
+  (is (= (slurp (encode {"a" 42}))
          "d1:ai42ee")))
 
 (deftest decode-trivial []
   (is (= {"a" 42}
-         (decode (ByteArrayInputStream. (.getBytes "d1:ai42ee"))))))
+         (decode (io/input-stream (.getBytes "d1:ai42ee"))))))
 
 (deftest encode-and-decode []
-  (let [m {"a" 42}]
-    (is (= m (decode (ByteArrayInputStream. (encode m)))))))
+  (let [m {"a" 42}
+        encoded (encode m)]
+    (is (= m
+           (decode (io/input-stream encoded))))))
