@@ -1,7 +1,7 @@
 (ns trrnt.tracker
-  (:use clojure.java.io)
   (:import (java.io ByteArrayOutputStream DataOutputStream)
            (java.net InetSocketAddress InetAddress DatagramPacket DatagramSocket URI))
+  (:refer-clojure :exclude [reader-conditional tagged-literal])
   (:require [trrnt.utils :refer :all]
             [trrnt.bencode :as b]
             [gloss.core :refer :all]
@@ -9,7 +9,8 @@
             [aleph.http :as http]
             [byte-streams :as bs]
             [clojure.string :as string]
-            [clojure.core.async :as a]))
+            [clojure.core.async :as a]
+            [clojure.java.io :as io]))
 
 (def udp-frames
   {:connect-req (ordered-map :conn-id :uint64
@@ -125,7 +126,8 @@
       (let [resp-map (decode (udp-frames :connect-resp) resp)
             req-map (decode (udp-frames :connect-req) req)]
         (when (and
-               (= (req-map :transaction-id (resp-map :transaction-id)))
+               (= (req-map :transaction-id)
+                  (resp-map :transaction-id))
                (zero? (resp-map :action)))
           (resp-map :conn-id))))))
 
@@ -198,7 +200,7 @@
                              :compact 1
                              :no_peer_id 0
                              :event (name event)}})
-        decoded-resp (b/decode (input-stream (:body res)))]
+        decoded-resp (b/decode (io/input-stream (:body res)))]
     (update-in decoded-resp ["peers"] parse-compact-peers)))
 
 (defn udp-tracker?

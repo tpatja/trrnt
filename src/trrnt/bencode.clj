@@ -1,8 +1,6 @@
 (ns trrnt.bencode
   (:import (java.io ByteArrayOutputStream))
-  (:use [clojure.set]))
-
-;; based on implementation by Nurullah Akkaya
+  (:require [clojure.java.io :as io]))
 
 (defn- decode-number [stream delimeter & ch]
   (loop [i (if (nil? ch) (.read stream) (first ch)), result ""]
@@ -31,8 +29,9 @@
       (apply hash-map list)
       {:order (map first (partition 2 list))})))
 
-(defn decode [stream & i]
+(defn decode
   "decode clojure data structure from given InputStream of bencoded data"
+  [stream & i]
   (let [indicator (if (nil? i) (.read stream) (first i))]
     (cond
       (and (>= indicator 48)

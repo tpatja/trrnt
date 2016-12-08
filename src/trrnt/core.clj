@@ -1,10 +1,10 @@
 (ns trrnt.core
-  (:use clojure.java.io)
   (:require [trrnt.utils :refer :all]
             [trrnt.bencode :as b]
             [trrnt.tracker :as t]
             [trrnt.pwp :as pwp]
-            [clojure.core.async :as a])
+            [clojure.core.async :as a]
+            [clojure.java.io :as io])
   (:gen-class))
 
 (defn info-hash
@@ -30,7 +30,7 @@
 
 (defn start-torrent-test
   [fname]
-  (let [d (b/decode (input-stream fname))
+  (let [d (b/decode (io/input-stream fname))
         trackers (torrent-trackers d)
         size (torrent-size (d "info"))
         hash (String. (info-hash d) "ISO-8859-1")]

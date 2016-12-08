@@ -1,8 +1,9 @@
 (ns trrnt.utils
   (:import (java.security MessageDigest)))
 
-(defn split-ba [ba i]
+(defn split-ba
   "split ba on index i, return two seqs"
+  [ba i]
   (map byte-array [(take i ba) (take-last (- (count ba) i) ba)]))
 
 (defn rand-string [characters n]

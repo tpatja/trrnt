@@ -11,4 +11,6 @@
                  [manifold "0.1.5"]
                  [gloss "0.2.6"]
                  [byte-streams "0.2.2"]
-                 [cheshire "5.6.3"]])
+                 [cheshire "5.6.3"]]
+  :profiles {:uberjar {:aot :all
+                       :omit-source true}})

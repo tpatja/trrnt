@@ -65,8 +65,9 @@
                                   :info-hash info-hash
                                   :peer-id peer-id}))
 
-(defn peer-client-name [peer-id]
+(defn peer-client-name
   "Return client name and version given a peer ID. Assumes peer ID uses BEP-20 convention"
+  [peer-id]
   (let [match (re-find #"^\-([A-Z][A-Z])(\p{ASCII}+)\-" peer-id)]
     (if match
       (let [client-id (second match)
@@ -79,9 +80,10 @@
    (= (:protocol-name hs) "BitTorrent protocol")
    (= (:info-hash hs) info-hash)))
 
-(defn handshake [addr port info-hash]
+(defn handshake
   "Open TCP connection to peer, send+receive handshake. Return decoded peer handshake
    and stream"
+  [addr port info-hash]
   (let [hs (mk-handshake info-hash)
         c @(d/timeout! (tcp/client {:host addr
                                     :port port}) 3000 nil)]
