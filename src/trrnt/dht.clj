@@ -1,7 +1,6 @@
 (ns trrnt.dht
   (:require [trrnt.bencode :as b]))
 
-
 (defn- encode-dht-message [transaction-id message-type data-map]
   (b/encode (merge  {"t" transaction-id
                      "y" message-type}
@@ -11,24 +10,22 @@
   (encode-dht-message transaction-id "q" (merge {"q" query-type}
                                                 {"a" query-args-map})))
 
-
 (defn encode-ping-q [transaction-id querying-node-id]
-  (encode-dht-query transaction-id
-                    "ping"
-                    {"id" querying-node-id}))
+  (encode-dht-q transaction-id
+                "ping"
+                {"id" querying-node-id}))
 
 (defn encode-find-node-q [transaction-id querying-node-id target-node-id]
-  (encode-dht-query transaction-id
-                    "find_node"
-                    {"id" querying-node-id
-                     "target" target-node-id}))
+  (encode-dht-q transaction-id
+                "find_node"
+                {"id" querying-node-id
+                 "target" target-node-id}))
 
 (defn encode-get-peers-q [transaction-id querying-node-id infohash]
-    (encode-dht-query transaction-id
-                    "get_peers"
-                    {"id" querying-node-id
-                     "info_hash" infohash}))
-
+  (encode-dht-q transaction-id
+                "get_peers"
+                {"id" querying-node-id
+                 "info_hash" infohash}))
 
 (defn- decode-message-data
   [encoded]

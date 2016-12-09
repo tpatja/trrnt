@@ -3,13 +3,11 @@
              [clojure.java.io :as io]
              [trrnt.dht :as sut]))
 
-
 (deftest decode-error-test
   (let [encoded (.getBytes "d1:eli201e24:A Generic Error Occurrede1:t2:aa1:y1:ee")
         decoded (sut/decode-error (io/input-stream encoded))]
     (is (= (:error-code decoded) 201))
     (is (= (:error-message decoded) "A Generic Error Occurred"))))
-
 
 (deftest ping-query-test
   (let [transaction-id "asdgadsgdghh"

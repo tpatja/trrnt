@@ -7,8 +7,9 @@
   [ba i]
   (map byte-array [(take i ba) (take-last (- (count ba) i) ba)]))
 
-(defn rand-string [characters n]
+(defn rand-string
   "random n-length string consisting of given characters"
+  [characters n]
   (->> (fn [] (rand-nth characters))
        repeatedly
        (take n)
