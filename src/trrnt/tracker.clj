@@ -169,7 +169,7 @@
   "Parse vector of ip + port maps from given byte-array with compact peer list (BEP-23) data"
   [ba]
   (let [decoded (decode
-                 (repeated (ordered-map :ip :int32 :port :uint16) :prefix :none)
+                 (repeated (ordered-map :ip :uint32 :port :uint16) :prefix :none)
                  ba)]
     (vec (map #(update-in % [:ip] ip-addr-str)
               decoded))))
