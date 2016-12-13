@@ -1,16 +1,19 @@
 (ns trrnt.tracker
   (:import (java.io ByteArrayOutputStream DataOutputStream)
            (java.net InetSocketAddress InetAddress DatagramPacket DatagramSocket URI))
-  (:refer-clojure :exclude [reader-conditional tagged-literal])
-  (:require [trrnt.utils :refer :all]
+  (:require [trrnt.utils :as utils]
             [trrnt.bencode :as b]
             [gloss.core :refer :all]
             [gloss.io :refer :all]
             [aleph.http :as http]
             [byte-streams :as bs]
             [clojure.string :as string]
-            [clojure.core.async :as a]
-            [clojure.java.io :as io]))
+            [clojure.core.async :refer [go chan >!]]
+            [clojure.java.io :as io]
+            [clojure.string :as str]))
+
+
+(defonce usable-public-udp-trackers (atom []))
 
 (def udp-frames
   {:connect-req (ordered-map :conn-id :uint64
@@ -24,8 +27,8 @@
    :announce-req (ordered-map :conn-id :uint64
                               :action :uint32
                               :transaction-id :uint32
-                              :info-hash (string :iso-8859-1 :length 20)
-                              :peer-id (string :ascii :length 20)
+                              :info-hash (finite-block 20)
+                              :peer-id (finite-block 20)
                               :downloaded :uint64
                               :left :uint64
                               :uploaded :uint64
@@ -44,7 +47,7 @@
    :scrape-req (ordered-map :conn-id :uint64
                             :action :uint32
                             :transaction-id :uint32
-                            :info-hash (string :iso-8859-1 :length 20))
+                            :info-hash (finite-block 20))
 
    :scrape-resp (ordered-map :action :uint32
                              :transaction-id :uint32
@@ -109,9 +112,8 @@
           packet (DatagramPacket. data data-len addr)
           recv-packet (DatagramPacket. (byte-array max-recv-len) max-recv-len recv-addr)]
       (println (str "local port "  (.getLocalPort s)))
-      (.setSoTimeout s 3000)
+      (.setSoTimeout s 5000)
       (.send s packet)
-      (Thread/sleep 200)
       (.receive s recv-packet)
       (byte-array (take (.getLength recv-packet) (.getData recv-packet))))
     (catch Exception e
@@ -120,19 +122,22 @@
 (defn connect-udp-tracker
   "Send connect request to UDP tracker. On success, return connection-id"
   [host port]
-  (let [req (bs/to-byte-array (mk-connect-input))
-        resp (udp-request host port req (count req) 20)]
-    (when resp
+  (println "connect-udp-tracker" host port)
+  (let [req  (bs/to-byte-array (mk-connect-input))
+        resp (udp-request host port req (count req) 16)]
+    (if resp
       (let [resp-map (decode (udp-frames :connect-resp) resp)
             req-map (decode (udp-frames :connect-req) req)]
         (when (and
                (= (req-map :transaction-id)
                   (resp-map :transaction-id))
                (zero? (resp-map :action)))
-          (resp-map :conn-id))))))
+          (resp-map :conn-id)))
+      (do (swap! usable-public-udp-trackers #(remove #{[host port]} %))
+          nil))))
 
 (defn gen-peer-id []
-  (rand-string (map char (range (int \a) (inc (int \z)))) 20))
+  (utils/rand-string (map char (range (int \a) (inc (int \z)))) 20))
 
 (defn should-escape
   [ch]
@@ -144,28 +149,61 @@
            (= 126 ch))))               ;; ~
 
 (defn hash->urlparam
+  "URL encode given sha1 (bytes)"
   [hash]
   (string/join (map (fn [ch] (if (should-escape ch)
-                               (str "%" (format "%02X" ch))
-                               (char  ch)))
-                    (.getBytes  hash "ISO-8859-1"))))
+                              (str "%" (format "%02X" ch))
+                              (char  ch)))
+                    hash)))
+
+
+(defn ip-addr-str
+  "String format IPV4 address from given 32-bit integer"
+  [x]
+  (-> x
+      str
+      InetAddress/getByName
+      .getHostAddress))
 
 (defn parse-compact-peers
+  "Parse vector of ip + port maps from given byte-array with compact peer list (BEP-23) data"
+  [ba]
+  (let [decoded (decode
+                 (repeated (ordered-map :ip :int32 :port :uint16) :prefix :none)
+                 ba)]
+    (vec (map #(update-in % [:ip] ip-addr-str)
+              decoded))))
+
+(defn parse-compact-peers-http
   [s]
-  (reduce (fn [list peer]
-            (let [[port-msb port-lsb] (take-last 2 (map int peer))
-                  str-ip (string/join \. (map int (take 4 peer)))]
-              (conj list
-                    {:ip str-ip
-                     :port (bit-or
-                            (bit-shift-left port-msb 8) (bit-and port-lsb 0xff))})))
-          [] (partition 6 s)))
+  (println "parse-compact-peers-http" (count s))
+  (parse-compact-peers (.getBytes s "ISO-8859-1")))
+
+
+(defn ipv6-addr-str
+  [data]
+  (string/join ":" (map #(format "%x" %)
+                        (decode (repeated :uint16 :prefix :none) data))))
+
+(defn parse-compact-peers6-http
+  [s]
+  (println "parse-compact-peers6" (count s))
+  (let [ba (.getBytes s "ISO-8859-1")
+        decoded (decode
+                 (repeated (ordered-map :ip6 (finite-block 16) :port :uint16) :prefix :none)
+                 ba)]
+    (vec
+     (map #(update-in % [:ip6] ipv6-addr-str) decoded))))
+
+
+
 
 (defn announce-udp
   "Announce given event to UDP tracker."
   ([host port info-hash event left]
-   (println "announce-udp")
-   (announce-udp host port (connect-udp-tracker host port) info-hash event left))
+   (let [connection-id (connect-udp-tracker host port)]
+     (when connection-id
+       (announce-udp host port connection-id info-hash event left))))
   ([host port connection-id info-hash event left]
    (println "announce-udp " event)
    (when connection-id
@@ -178,16 +216,16 @@
                                                   event
                                                   left
                                                   6881))
-           resp (udp-request host port req (count req) 1024)
-           [resp-beginning resp-end] (split-ba resp 20)
+           resp (udp-request host port req (count req) 2048)
+           [resp-beginning resp-end] (utils/split-ba resp 20)
            resp-map (decode (udp-frames :announce-resp-beginning) resp-beginning)
-           peers (parse-compact-peers (String. resp-end "ISO-8859-1"))]
+           peers (parse-compact-peers resp-end)]
        (assoc resp-map "peers" peers)))))
 
 (defn announce-http
   "Announce given event to HTTP tracker"
   [announce-url info-hash event left]
-  (println "announce-http" event)
+  (println "announce-http" event announce-url)
   (let [peer-id (gen-peer-id)
         encoded-hash (hash->urlparam info-hash)
         url (.concat announce-url (str "?info_hash=" encoded-hash))
@@ -197,11 +235,13 @@
                              :uploaded 0
                              :downloaded 0
                              :left left
-                             :compact 1
+                             :compact "1"
                              :no_peer_id 0
                              :event (name event)}})
         decoded-resp (b/decode (io/input-stream (:body res)))]
-    (update-in decoded-resp ["peers"] parse-compact-peers)))
+    (-> decoded-resp
+        (update-in ["peers"] parse-compact-peers-http)
+        (update-in ["peers6"] parse-compact-peers6-http))))
 
 (defn udp-tracker?
   [url]
@@ -221,48 +261,50 @@
 
 (defn announce
   [tracker info-hash event left]
-  (println "announce " tracker)
+  (println "announce " tracker (udp-tracker? tracker))
   (try
     (if (udp-tracker? tracker)
-      (let [[host port] (udp-tracker-target tracker)]
-        (announce-udp host port info-hash event left))
+      (announce-udp tracker info-hash event left)
       (announce-http tracker info-hash event left))
     (catch Exception e
-      (println "announce exception " e))))
+      (println "announce exception (tracker " tracker ") " e))))
 
 (defn <announce
   "Announce given event for given trackers. Return core.async channel yielding list of peers"
   [trackers info-hash event left]
   (println "<announce " event trackers)
-  (let [c (a/chan)]
-    (doseq [t (conj trackers "udp://open.demonii.com:1337/announce")]
-      (a/go
+  (let [c (chan)]
+    (doseq [t trackers]
+      (go
         (let [r (announce t info-hash event left)]
           (when r
             ;; TODO: somehow make sure no duplicates get put into channel
-            (a/>! c [t (r "peers")])))))
+            (>! c [t (r "peers")])))))
     c))
 
 (defn scrape-udp
   "scrape UDP tracker for given info-hash"
   ([host port info-hash]
-   (scrape-udp host port (connect-udp-tracker host port) info-hash))
+   (let [connection-id (connect-udp-tracker host port)]
+     (when connection-id
+       (scrape-udp host port connection-id info-hash))))
   ([host port connection-id info-hash]
    (when connection-id
      (println (str "connected to " host " with id " connection-id))
      (let [req (bs/to-byte-array (mk-scrape-req connection-id info-hash))
            resp (udp-request host port req (count req) 20)]
-       (when resp
+       (if resp
          (let [resp-map (decode (udp-frames :scrape-resp) resp)
                req-map (decode (udp-frames :scrape-req) req)]
            (when (= (req-map :transaction-id)
                     (resp-map :transaction-id))
-             (select-keys resp-map [:leechers :completed :seeders]))))))))
+             (select-keys resp-map [:leechers :completed :seeders])))
+         (swap! usable-public-udp-trackers #(remove #{[host port]} %)))))))
 
 (defn scrape-http
   ;; looks like scrape over HTTP is not really used anymore
   [url info-hash]
-  (println "scrape-http")
+  (println "scrape-http, url:" url)
   (try
     (let [scrape-url (announce-url->scrape-url url)
           resp @(http/get url {:query-params {:info_hash info-hash}})]
@@ -270,16 +312,48 @@
     (catch Exception e
       (println (str "scrape-http exception: " e)))))
 
+
+(defn <scrape
+  [trackers info-hash]
+  (let [c (chan)]
+    (doseq [t trackers]
+      (println (str "scraping " t))
+      (go
+        (if (udp-tracker? t)
+          (let [[host port] t
+                res (scrape-udp host port info-hash)])
+          (let [res (scrape-http t info-hash)]))
+        ))))
+
+
 (defn <scrape-udp
   "Scrapes given hash on given UDP trackers.
   Returns a channel for results"
   [trackers info-hash]
-  (let [c (a/chan)]
+  (let [c (chan)]
     (doseq [[host port] trackers]
       (println (str "scraping " host " " port))
-      (a/go
+      (go
         (let [res (scrape-udp host port info-hash)]
           (println "res " res)
           (when res
-            (a/>! c [[host port info-hash] res])))))
+            (>! c [[host port info-hash] res])))))
     c))
+
+
+(defn get-public-udp-trackers []
+  (if (empty? @usable-public-udp-trackers)
+    (reset! usable-public-udp-trackers
+            (->>
+             "https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_all_udp.txt"
+             slurp
+             string/split-lines
+             (filter not-empty)
+             (map udp-tracker-target)))
+    @usable-public-udp-trackers))
+
+(defn scrape-public-udp-trackers
+  "Scrape public UDP trackers for give infohash."
+  [info-hash]
+  (for [[host port] (get-public-udp-trackers)]
+    {host (scrape-udp host port info-hash)}))
