@@ -184,14 +184,6 @@
                                            "peer id" :peer-id}) x))
     (string? x) (parse-compact-peers (.getBytes x "ISO-8859-1"))))
 
-(defn parse-compact-peers-http
-  [s]
-  (println "parse-compact-peers-http" (count s) s (type s))
-  (if s
-    (parse-compact-peers (.getBytes s "ISO-8859-1"))
-    []))
-
-
 (defn ipv6-addr-str
   [data]
   (string/join ":" (map #(format "%x" %)

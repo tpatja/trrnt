@@ -1,6 +1,7 @@
 (ns trrnt.utils
   (:import (java.security MessageDigest))
-  (:require [clojure.java.io :as io]))
+  (:require [clojure.java.io :as io]
+            [clojure.string :as string]))
 
 (defn split-ba
   "split ba on index i, return two seqs"
@@ -24,4 +25,4 @@
 (defn hexify
   "Hex string from given byte-array"
   [ba]
-  (format "%x" (new java.math.BigInteger ba)))
+ (string/join (map #(format "%02x" %) ba)))
