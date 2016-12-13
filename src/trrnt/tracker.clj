@@ -8,6 +8,7 @@
             [aleph.http :as http]
             [byte-streams :as bs]
             [clojure.string :as string]
+            [clojure.set :refer [rename-keys]]
             [clojure.core.async :refer [go chan >!]]
             [clojure.java.io :as io]
             [clojure.string :as str]))
@@ -174,10 +175,21 @@
     (vec (map #(update-in % [:ip] ip-addr-str)
               decoded))))
 
+(defn parse-peers-http
+  "Parse peers from given data (compact or list of maps)"
+  [x]
+  (cond
+    (vector? x) (vec (map #(rename-keys % {"ip" :ip
+                                           "port" :port
+                                           "peer id" :peer-id}) x))
+    (string? x) (parse-compact-peers (.getBytes x "ISO-8859-1"))))
+
 (defn parse-compact-peers-http
   [s]
-  (println "parse-compact-peers-http" (count s))
-  (parse-compact-peers (.getBytes s "ISO-8859-1")))
+  (println "parse-compact-peers-http" (count s) s (type s))
+  (if s
+    (parse-compact-peers (.getBytes s "ISO-8859-1"))
+    []))
 
 
 (defn ipv6-addr-str
@@ -188,15 +200,14 @@
 (defn parse-compact-peers6-http
   [s]
   (println "parse-compact-peers6" (count s))
-  (let [ba (.getBytes s "ISO-8859-1")
-        decoded (decode
-                 (repeated (ordered-map :ip6 (finite-block 16) :port :uint16) :prefix :none)
-                 ba)]
-    (vec
-     (map #(update-in % [:ip6] ipv6-addr-str) decoded))))
-
-
-
+  (if s
+    (let [ba (.getBytes s "ISO-8859-1")
+          decoded (decode
+                   (repeated (ordered-map :ip (finite-block 16) :port :uint16) :prefix :none)
+                   ba)]
+      (vec
+       (map #(update-in % [:ip] ipv6-addr-str) decoded)))
+    []))
 
 (defn announce-udp
   "Announce given event to UDP tracker."
@@ -209,18 +220,18 @@
    (when connection-id
      (println (str "connected to " host " with id " connection-id))
      (let [peer-id (gen-peer-id)
-           announce-req ()
            req (bs/to-byte-array (mk-announce-req connection-id
                                                   info-hash
                                                   peer-id
                                                   event
                                                   left
                                                   6881))
-           resp (udp-request host port req (count req) 2048)
-           [resp-beginning resp-end] (utils/split-ba resp 20)
-           resp-map (decode (udp-frames :announce-resp-beginning) resp-beginning)
-           peers (parse-compact-peers resp-end)]
-       (assoc resp-map "peers" peers)))))
+           resp (udp-request host port req (count req) 2048)]
+       (when resp
+         (let [[resp-beginning resp-end] (utils/split-ba resp 20)
+               resp-map (decode (udp-frames :announce-resp-beginning) resp-beginning)
+               peers (parse-compact-peers resp-end)]
+           (assoc resp-map "peers" peers)))))))
 
 (defn announce-http
   "Announce given event to HTTP tracker"
@@ -240,7 +251,7 @@
                              :event (name event)}})
         decoded-resp (b/decode (io/input-stream (:body res)))]
     (-> decoded-resp
-        (update-in ["peers"] parse-compact-peers-http)
+        (update-in ["peers"] parse-peers-http)
         (update-in ["peers6"] parse-compact-peers6-http))))
 
 (defn udp-tracker?
@@ -352,8 +363,14 @@
              (map udp-tracker-target)))
     @usable-public-udp-trackers))
 
-(defn scrape-public-udp-trackers
-  "Scrape public UDP trackers for give infohash."
+
+(defn snatch-peers-from-public-udp-trackers
+  "Attempt to scrape peer lists for given infohash from public UDP trackers"
   [info-hash]
-  (for [[host port] (get-public-udp-trackers)]
-    {host (scrape-udp host port info-hash)}))
+  (let [trackers (get-public-udp-trackers)
+        results (doall (map
+                        (fn [[host port]] (announce-udp host port info-hash :started 10))
+                        trackers))]
+    (->> (map #(get % "peers") results)
+         (apply concat)
+         distinct)))
