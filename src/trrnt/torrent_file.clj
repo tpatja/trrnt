@@ -1,25 +1,19 @@
 (ns trrnt.torrent-file
   (:require
    [trrnt.bencode :as b]
-   [trrnt.utils :refer [sha1]]
+   [trrnt.utils :refer [sha1 hexify]]
    [clojure.java.io :as io]
    [clojure.string :as string]))
 
 (defn torrent-infohash
-  "sha-1 digest of torrent's info map (20-byte)"
+  "sha-1 digest of torrent's info map (20-byte) as a byte-array"
   [torrent-map]
   (sha1 (b/encode (torrent-map "info"))))
 
 (defn torrent-infohash-str
   "sha-1 digest of torrent's info map (hex string)"
   [torrent-map]
-  (let [data-bytes (torrent-infohash torrent-map)]
-    (string/join
-     (map
-      #(.substring
-        (Integer/toString
-         (+ (bit-and % 0xff) 0x100) 16) 1)
-      data-bytes))))
+  (hexify (torrent-infohash torrent-map)))
 
 (defn torrent-size
   "Total size of torrent's downloadable contents in bytes"

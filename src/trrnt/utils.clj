@@ -16,6 +16,12 @@
        (apply str)))
 
 (defn sha1
+  "SHA1 digest of given bytes"
   [x]
   (let [d (MessageDigest/getInstance "SHA1")]
     (.digest d x)))
+
+(defn hexify
+  "Hex string from given byte-array"
+  [ba]
+  (format "%x" (new java.math.BigInteger ba)))
